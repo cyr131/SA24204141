@@ -1,0 +1,450 @@
+---
+title: "Empirical likelihood alternatives for generalized estimating equations"
+author: "Yiran Chen"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Empirical likelihood alternatives for generalized estimating equations}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+## Summary
+
+The R package _SA24204141_ is used for estimating regression coefficients for longitudinal data with a working correlation structure using generalized estimating equations (GEE).The R package provides two functions that solve the above problem: _GEE_ and _GEE_EL_.
+
+The _GEE_ function is the classical method of solving GEE to obtain parameter estimates.This function requires the input of a specifically known working correlation matrix R.
+
+It has the advantage of running at a faster rate and can be more consistently maintained to produce smaller estimation errors. However, it has the disadvantage that the working correlation matrix R needs to be specified, and R is often unknown in practice.In addition , the method of estimating the equations is not conducive to subsequent model selection.
+
+The _GEE_EL_ function is an alternative approach in the empirical likelihood framework, which estimates the regression coefficients for longitudinal data by means of a great empirical likelihood ratio, a method that is my innovation.
+
+It has the advantage that it does not need to specify a specific R, only the type to which the R belongs is given, and the final R and the parameter of interest are estimated by iteration. This likelihood-based approach facilitates subsequent model selection, thus improving the efficiency of parameter estimation. However, it has the disadvantage that the computer running rate is lower than that of the GEE function due to the need to solve the two-layer optimization problem.
+
+In addition to the two main functions mentioned above, there are _exchCpp, ar1Cpp, statCpp,_(they are Rcpp functions) and _logit_  functions that are used to assist the two main functions.
+
+## Model
+
+For longitudinal data, let $y_{it}$ be the response of interest and $x_{it}$ be a p-dimensional vector of covariate information of subject i at time t, where i = 1, … , n and t = 1, … , T. We consider a generalized linear model
+for $y_{it}$, given by:
+
+\[f(y_{it}|{x}_{it};{\beta}_{i},\phi) = exp [\{y_{it}{\theta}_{it}-a({\theta}_{it})+b(y_{it})\}/{\phi}]\]
+
+
+where a(.) and b(.) are known functions, $\theta_{it}=u(x_{it}^{T}\beta_{i})$ , link function u(.) a known monotone function, $\beta_{i}$ is the regression parameter,$\phi$ is a known scale parameter common to all subjects.
+
+### GEE method
+
+A $t_i \times t_i$ working correlation matrix $R(\alpha), \alpha=\left(\alpha_1, \ldots, \alpha_s\right)^T$, is assumed for $Y_i$, and the corresponding working covariance matrix is
+$$
+V_i(\beta, \alpha, \phi)=A_i^{1 / 2}(\beta, \phi) R(\alpha) A_i^{1 / 2}(\beta, \phi),
+$$
+where $A_i(\beta, \phi)$ is a diagonal matrix with $\operatorname{var}\left(Y_{i j}\right)=\phi v\left(\mu_{i j}\right), j=1, \ldots, t_i$, along the diagonal. $V_i=\operatorname{var}\left(Y_i\right)$ if $R(\alpha)$ is chosen correctly. The generalized estimating equation for $\beta$ is defined as
+$$
+\sum_{i=1}^n\left(\frac{\partial \mu_i}{\partial \beta^T}\right)^T V_i^{-1}(\beta, \alpha, \phi)\left(Y_i-\mu_i\right)=0
+$$
+
+### GEE_EL method
+
+The empirical likelihood ratio (ELR) is
+
+\[\mathcal{R}(\theta)=\rm{\sup}\{\displaystyle\prod_{i=1}^n n w_{i}:w_{i}\ge0,\displaystyle\sum_{i=1}^n w_{i}=1,\displaystyle\sum_{i=1}^n w_{i}g(X_{i},\theta)=0\}\quad(1)\]
+
+The maximum empirical likelihood estimator (MELE) of $\theta_0$ is
+
+\[\hat{\theta}=\mathop{\arg\max}\limits_{\theta}\mathcal{R}(\theta)\quad(2)\]
+Applying the above MELE to the parameter estimation of longitudinal data. Within-subject correlation (R) is considered:
+
+\[g((Y_{i},X_{i}),\beta;R)=(\displaystyle\frac{\partial{\mu}_{i}}{\partial{\beta}^{T}})^{T}A_{i}^{-1/2}R^{-1}(\hat{\alpha}(\beta))A_{i}^{-1/2}(Y_{i}-{\mu}_{i})\quad(3)\]
+
+The $\hat{\alpha}(\beta)$ is the MOM estimator of $\alpha$ given $\beta$ and R, as shown in the Table1 ($e_{ij}$ is the Pearson residuals)
+
+In (1), $g(X_i,\theta)$ replaced by $g((Y_{i},X_{i}),\beta;R)$, $\theta$ replaced by $\beta$,then the MELE for $\beta$ is
+$\hat{\beta}_{E}=\mathop{\arg\max}\limits_{\beta \in {\mathbb{R}}^p}\mathcal{R}(\beta)$ and $\hat{\alpha}_E$ is the MOM estimator of $\alpha$ given $\hat{\beta}_{E}$
+
+### data generation
+
+```{r, warning = FALSE}
+library(MASS)
+library(bindata)
+library(SA24204141)
+  ## settings
+  TT <- 10   # 10 or 20
+  n <- 100    # 180 or 270
+  ID <- 1:n
+  N <- n*TT
+
+  ## covariates
+  p <- 3   # number of covariates
+  CC <- matrix(c(1, 0.4, 0.4, 1), 2, 2)
+  zz <- mvrnorm(n*TT, c(0, 0), CC)
+
+  x1 <- matrix(zz[,1], n, TT)
+  x2 <- matrix(zz[,2], n, TT)
+  X0 <- array(NA, c(n, TT, p))
+  X0[,,1] <- 1
+  X0[,,2] <- x1
+  X0[,,3] <- x2
+
+  ## regression coefficients
+  Beta <- c(1,-2,1)   # true regression coefficients
+
+
+  tMu <- matrix(NA, n, TT)
+  for(i in 1:n){
+    tMu[i,] <- as.vector(X0[i,,]%*%Beta)
+  }
+  Prob <- logit(tMu)
+
+  ## true correlation structure (equi-correlation)
+  tR <- matrix(0.5, TT, TT)
+  diag(tR) <- 1
+
+  ## data generation
+  Y0 <- matrix(NA, n, TT)
+  for(i in 1:n){
+    Y0[i,] <- as.vector(rmvbin(1, margprob=Prob[i,], sigma=tR))
+  }
+```
+## My function
+
+### GEE
+
+Estimates of regression coefficients are obtained by solving generalized estimating equations
+
+Input: 
+
+-YY Response Variables (Matrix)
+-XX Independent variables (3-dimensional arrays)
+-RR Designated working correlation matrix (Matrix)
+-init.beta initial value of iteration (vector)
+-maxit Maximum number of iteration (int)
+
+Output:final coefficient estimates
+
+```{r}
+function(YY, XX, RR, init.beta=NULL, maxit=100){
+  # 赋值参数
+  th <- 0.0001
+  ep <- 10^(-5)
+  n <- dim(YY)[1]
+  TT <- dim(YY)[2]
+  p <- dim(XX)[3]
+  if(is.null(init.beta)){ hB <- rep(0, p) }
+  else{ hB <- init.beta }
+  ## GEE求解
+  # Iteration次数
+  for(k in 1:maxit){
+    hB0 <- hB
+    mat1 <- 0
+    mat2 <- 0
+    # 遍历n个subjects
+    for(i in 1:n){
+      Mu <- logit(as.vector(XX[i,,]%*%hB))
+      S <- YY[i,]-Mu
+      vv <- Mu*(1-Mu)
+      vv[vv<th] <- th
+      A <- diag(vv)
+      V <- sqrt(A)%*%RR%*%sqrt(A) + th*diag(TT)
+      D <- A%*%XX[i,,]
+      mat1 <- mat1+t(D)%*%ginv(V)%*%D
+      mat2 <- mat2+t(D)%*%ginv(V)%*%S
+    }
+    #牛顿法求解
+    hB <- hB+as.vector( ginv(mat1)%*%mat2 )
+    dd <- sum( abs(hB-hB0) ) / sum( abs(hB0)+0.0001 )
+    if( dd<ep ){ break }
+  }
+  return(hB)
+}
+```
+```{r}
+#example
+GEE(Y0,X0,tR)
+```
+
+### GEE_EL
+
+Estimates of regression coefficients are obtained by maximizing the empirical likelihood ratio
+
+Input: 
+
+-y Response Variables (Matrix)
+-x Independent variables (3-dimensional arrays)
+-cor Designated the type of working correlation;Optional types are:ID、EC、AR、ST
+-init.beta initial value of iteration (vector)
+-maxit Maximum number of iteration (int)
+
+Output:final coefficient estimates and negative logarithmic value of the empirical likelihood ratio
+
+```{r}
+function(y, x, cor = "EC", init.beta = NULL, maxit = 1000) {
+  m <- dim(x)[3]
+  # cor == "ID"
+  if (cor == "ID") {
+    elr_id <-  function(b) {  #b输入为列向量
+      m <- dim(x)[3]
+      n <- dim(x)[1]    #注意x,y来源
+      t <- dim(x)[2]
+      g <- matrix(0, n, m)  #n对应i的个数，m对应b的维度3
+    #求解经验似然比
+      error <- matrix(0,t,n)
+      D <- array(0,c(t,3,n))
+      A <- array(0,c(t,t,n))
+      for (i in 1:n) {
+        fitted <- plogis( x[i,,] %*% b )
+        error[,i] <- y[i,]-fitted
+        D[,,i] <- matrix(rep(fitted*(1-fitted),3),t,3)*x[i,,]
+        A[,,i] <- diag(as.vector((fitted*(1-fitted))^(-1)))
+      }
+      for (i in 1:n) {
+        A.half <- A[,,i]^(1/2)
+        g[i,] <- crossprod(D[,,i], A.half %*% A.half %*% error[,i])
+      }
+      g.mu <- rep(0, m)
+      el.test(g, g.mu, gradtol = 1e-9)$"-2LLR"
+    }
+    if(is.null(init.beta)){ hB <- rep(0,m) }
+    else{ hB <- init.beta }
+    #极大化经验似然比
+    result <- optim(par = hB, fn = elr_id, method = "Nelder-Mead",control = list(maxit = maxit))
+    return(list(coff=result$par,value=result$value))
+  }
+  # cor == "EC"
+  if (cor == "EC") {
+    elr_ec <- function(b) {  # b输入为列向量
+      m <- dim(x)[3]
+      n <- dim(x)[1]  # 注意x,y格式
+      t <- dim(x)[2]
+      # n对应i的个数，m对应b的维度3
+      g <- matrix(0, n, m)
+      theta <- matrix(0, n, t)
+      for (i in 1:n) {
+        theta[i, ] <- x[i, , ] %*% b
+      }
+      #求解参数alpha，得到EC结构阵：R
+      e <- matrix(0, n, t)
+      e <- (y - 1 / (1 + exp(-theta))) / sqrt(1 / (2 + exp(theta) + exp(-theta)))
+      alpha <- 0
+      for (i in 1:n) {
+        for (j in 1:t) {
+          for (k in 1:t) {
+            if (k != j) alpha <- alpha + e[i, j] * e[i, k]
+          }
+        }
+      }
+      alpha <- alpha / (n*t*(t-1)-m)  # 矩估计由b求alpha
+      alpha <- min(0.95, alpha)
+      alpha <- max(0, alpha)
+      R <- exchCpp(t, alpha)
+      #求解经验似然比
+      error <- matrix(0, t, n)
+      D <- array(0, c(t, 3, n))
+      A <- array(0, c(t, t, n))
+      for (i in 1:n) {
+        fitted <- plogis(x[i, , ] %*% b)
+        error[, i] <- y[i, ] - fitted
+        D[, , i] <- matrix(rep(fitted * (1 - fitted), 3), t, 3) * x[i, , ]
+        A[, , i] <- diag(as.vector((fitted * (1 - fitted))^(-1)))
+      }
+      for (i in 1:n) {
+        A.half <- A[, , i]^(1/2)
+        g[i, ] <- crossprod(D[, , i], A.half %*% solve(R, A.half %*% error[, i]))
+      }
+
+      g.mu <- rep(0, m)
+      el.test(g, g.mu, gradtol = 1e-9)$"-2LLR"
+    }
+    if(is.null(init.beta)){ hB <- numeric(m) }
+    else{ hB <- init.beta }
+    #极大化经验似然比
+    result <- optim(par = hB, fn = elr_ec, method = "Nelder-Mead",control = list(maxit = maxit))
+    return(list(coff=result$par,value=result$value))
+  }
+  # cor == "AR"
+  if (cor == "AR") {
+    elr_ar <- function(b) {  # b输入为列向量
+      m <- dim(x)[3]
+      n <- dim(x)[1]    #注意x,y来源
+      t <- dim(x)[2]
+      #n对应i的个数，m对应b的维度3
+      g <- matrix(0, n, m)
+      theta<-matrix(0,n,t)
+      for (i in 1:n) {
+        theta[i, ] <- x[i,,] %*% b
+      }
+      e<-matrix(0,n,t)
+      e <- (y - 1 / (1 + exp(-theta))) / sqrt(1 / (2 + exp(theta) + exp(-theta)))
+      #求解参数alpha，得到AR结构阵：R
+      alpha<-0
+      for (i in 1:n) {
+        for (j in 1:(t-1)) {
+          alpha<-alpha+e[i,j]*e[i,j+1]
+        }}
+      alpha<-alpha/((n*(t-1)-m))  #矩估计由b求alpha
+      alpha <- min(0.95, alpha)
+      alpha <- max(0, alpha)
+      R<-ar1Cpp(t,alpha)
+      #经验似然比
+      error <- matrix(0,t,n)
+      D <- array(0,c(t,3,n))
+      A <- array(0,c(t,t,n))
+      for (i in 1:n) {
+        fitted <- plogis( x[i,,] %*% b )
+        error[,i] <- y[i,]-fitted
+        D[,,i] <- matrix(rep(fitted*(1-fitted),3),t,3)*x[i,,]
+        A[,,i] <- diag(as.vector((fitted*(1-fitted))^(-1)))
+      }
+      for (i in 1:n) {
+        A.half <- A[,,i]^(1/2)
+        g[i,] <- crossprod(D[,,i], A.half %*% solve(R, A.half %*% error[,i]))
+      }
+      g.mu <- rep(0, m)
+      el.test(g, g.mu, gradtol = 1e-9)$"-2LLR"
+    }
+    if(is.null(init.beta)){ hB <- numeric(m) }
+    else{ hB <- init.beta }
+    #极大化经验似然比得到所需参数估计
+    result <- optim(par = hB, fn = elr_ar, method = "Nelder-Mead",control = list(maxit = maxit))
+    return(list(coff=result$par,value=result$value))
+  }
+  # cor == "ST"
+  if (cor == "ST") {
+    elr_st <- function(b) {  # b输入为列向量
+      m <- dim(x)[3]
+      n <- dim(x)[1]    #注意x,y来源
+      t <- dim(x)[2]
+      g <- matrix(0, n, m)  #n对应i的个数，m对应b的维度3
+
+      theta<-matrix(0,n,t)
+      for (i in 1:n) {
+        theta[i, ] <- x[i,,] %*% b
+      }
+      e<-matrix(0,n,t)
+      e <- (y - 1 / (1 + exp(-theta))) / sqrt(1 / (2 + exp(theta) + exp(-theta)))
+      # 求解ST矩阵的参数向量alpha
+      alpha<-rep(0,t-1)
+      for(k in 1:(t-1)){
+        for (i in 1:n) {
+          for (j in 1:(t-k)) {
+            alpha[k]<-alpha[k]+e[i,j]*e[i,j+k]
+          }}
+        alpha[k]<-alpha[k]/((n*(t-k)-m))  #矩估计由b求alpha
+        alpha[k] <- min(0.95, alpha[k])
+        alpha[k] <- max(0, alpha[k])
+      }
+      #得到对应ST结构阵
+      R<-statCpp(t,alpha)
+      #求解经验似然比
+      error <- matrix(0,t,n)
+      D <- array(0,c(t,3,n))
+      A <- array(0,c(t,t,n))
+      for (i in 1:n) {
+        fitted <- logit(as.vector(x[i,,] %*% b))
+        error[,i] <- y[i,]-fitted
+        D[,,i] <- matrix(rep(fitted*(1-fitted),3),t,3)*x[i,,]
+        A[,,i] <- diag(as.vector((fitted*(1-fitted))^(-1)))
+      }
+      for (i in 1:n) {
+        A.half <- A[,,i]^(1/2)
+        g[i,] <- crossprod(D[,,i], A.half %*% solve(R, A.half %*% error[,i]))
+      }
+      g.mu <- rep(0, m)
+      el.test(g, g.mu, gradtol = 1e-9)$"-2LLR"
+    }
+    if(is.null(init.beta)){ hB <- numeric(m) }
+    else{ hB <- init.beta }
+    #极大化经验似然比
+    result <- optim(par = hB, fn = elr_st, method = "Nelder-Mead",control = list(maxit = maxit))
+    return(list(coff=result$par,value=result$value))
+  }
+}
+```
+
+```{r}
+#example
+GEE_EL(Y0,X0,"ID")
+GEE_EL(Y0,X0,"EC")
+GEE_EL(Y0,X0,"AR")
+GEE_EL(Y0,X0,"ST")
+```
+
+### other functions
+
+#### cpp function 
+
+generate EC, AR, ST working correlation matrix:
+
+```{r,eval=FALSE}
+NumericMatrix exchCpp(int t, double alpha) {
+  NumericMatrix exch(t, t);
+
+  // 初始化对角线元素为1
+  for (int i = 0; i < t; ++i) {
+    exch(i, i) = 1.0;
+  }
+
+  // 设置非对角线元素为alpha
+  for (int i = 0; i < t; ++i) {
+    for (int j = 0; j < t; ++j) {
+      if (i != j) {
+        exch(i, j) = alpha;
+      }
+    }
+  }
+
+  return exch;
+}
+```
+```{r,eval=FALSE}
+NumericMatrix ar1Cpp(int t, double alpha) {
+   NumericMatrix ar1(t, t);
+   for(int i = 0; i < t; ++i) {
+     for(int j = i; j < t; ++j) {
+       if(i == j) {
+         ar1(i, j) = 1;
+       } else {
+         ar1(i, j) = pow(alpha, j - i);
+         ar1(j, i) = ar1(i, j);
+       }
+     }
+   }
+   return ar1;
+ }
+```
+```{r,eval=FALSE}
+NumericMatrix statCpp(int t, NumericVector a) {
+  int m = a.size();
+  NumericMatrix stat(t, t);
+
+  // 设置对角线元素为1
+  for(int i = 0; i < t; ++i) {
+    stat(i, i) = 1;
+  }
+
+  // 设置非对角线元素
+  for(int i = 0; i < t; ++i) {
+    for(int j = 0; j < t; ++j) {
+      if(abs(i - j) > 0 && abs(i - j) <= m) {
+        stat(i, j) = a[abs(i - j) - 1];
+      }
+    }
+  }
+
+  return stat;
+}
+```
+
+#### logit function
+
+Convert real numbers to numbers between (0,1) using logistic functions
+
+Input: x independent variable (Matrix)
+Output: the value of the logistic function corresponding to x
+
+```{r}
+function(x){
+  #计算logistic函数，允许x为数值，向量或矩阵
+  1/(1+exp(-x))}
+```
+

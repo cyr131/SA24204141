@@ -1,0 +1,17 @@
+Package: SA24204141
+Type: Package
+Title: Empirical likelihood method for solving GEE
+Version: 1.0
+Date: 2024-12-06
+Author: Yiran Chen
+Maintainer: Yiran Chen <cyr111@mail.ustc.edu.cn>
+Description:  This R package is designed for the estimation of regression coefficients for longitudinal data. It provides two main methods for solving the coefficients which are the classical generalized estimating equation (GEE) method and the method using empirical likelihood approaches.
+License: GPL (>= 2)
+Imports: Rcpp, emplik, bindata, ggplot2, MASS, mvtnorm, coin, boot, bootstrap, DAAG, lpSolve, microbenchmark
+LinkingTo: Rcpp
+Suggests: knitr, rmarkdown
+RoxygenNote: 7.3.2
+Encoding: UTF-8
+VignetteBuilder: knitr
+URL: http://github.com/cyr131/StatComp
+BugReports: http://github.com/cyr131/SA24204141/issues
